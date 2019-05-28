@@ -17,8 +17,8 @@ package org.springframework.data.redis.cache;
 
 import java.nio.charset.StandardCharsets;
 import java.time.Duration;
-import java.util.Collections;
-import java.util.Optional;
+import java.util.ArrayList;
+import java.util.List;
 import java.util.concurrent.TimeUnit;
 import java.util.function.Consumer;
 import java.util.function.Function;
@@ -27,6 +27,8 @@ import org.springframework.dao.PessimisticLockingFailureException;
 import org.springframework.data.redis.connection.RedisConnection;
 import org.springframework.data.redis.connection.RedisConnectionFactory;
 import org.springframework.data.redis.connection.RedisStringCommands.SetOption;
+import org.springframework.data.redis.core.Cursor;
+import org.springframework.data.redis.core.ScanOptions;
 import org.springframework.data.redis.core.types.Expiration;
 import org.springframework.lang.Nullable;
 import org.springframework.util.Assert;
@@ -51,26 +53,31 @@ class DefaultRedisCacheWriter implements RedisCacheWriter {
 
 	private final RedisConnectionFactory connectionFactory;
 	private final Duration sleepTime;
+	private final int scanClearCursorCount;
 
 	/**
 	 * @param connectionFactory must not be {@literal null}.
 	 */
 	DefaultRedisCacheWriter(RedisConnectionFactory connectionFactory) {
-		this(connectionFactory, Duration.ZERO);
+		this(connectionFactory, Duration.ZERO, 100);
 	}
 
 	/**
 	 * @param connectionFactory must not be {@literal null}.
 	 * @param sleepTime sleep time between lock request attempts. Must not be {@literal null}. Use {@link Duration#ZERO}
-	 *          to disable locking.
+	 *          to disable locking
+	 * @param scanCleanCursorCount when clean, it sets the count of the cursor of the scan. 
+	 *          must be greater than zero.
 	 */
-	DefaultRedisCacheWriter(RedisConnectionFactory connectionFactory, Duration sleepTime) {
+	DefaultRedisCacheWriter(RedisConnectionFactory connectionFactory, Duration sleepTime, int scanCleanCursorCount) {
 
 		Assert.notNull(connectionFactory, "ConnectionFactory must not be null!");
 		Assert.notNull(sleepTime, "SleepTime must not be null!");
+		Assert.isTrue(scanCleanCursorCount > 0, "ScanCleanCursorCount must be greater than zero!");
 
 		this.connectionFactory = connectionFactory;
 		this.sleepTime = sleepTime;
+		this.scanClearCursorCount = scanCleanCursorCount;
 	}
 
 	/*
@@ -179,8 +186,7 @@ class DefaultRedisCacheWriter implements RedisCacheWriter {
 					wasLocked = true;
 				}
 
-				byte[][] keys = Optional.ofNullable(connection.keys(pattern)).orElse(Collections.emptySet())
-						.toArray(new byte[0][]);
+				byte[][] keys = scanPattern(pattern, connection).toArray(new byte[0][]);
 
 				if (keys.length > 0) {
 					connection.del(keys);
@@ -194,6 +200,19 @@ class DefaultRedisCacheWriter implements RedisCacheWriter {
 
 			return "OK";
 		});
+	}
+
+	private List<byte[]> scanPattern(byte[] pattern, RedisConnection connection) {
+		ScanOptions options = ScanOptions.scanOptions()
+				.count(scanClearCursorCount)
+				.match(new String(pattern))
+				.build();
+		Cursor<byte[]> cursor = connection.scan(options);
+		List<byte[]> keysList = new ArrayList<>();
+		while (cursor.hasNext()) {
+			keysList.add(cursor.next());
+		}
+		return keysList;
 	}
 
 	/**

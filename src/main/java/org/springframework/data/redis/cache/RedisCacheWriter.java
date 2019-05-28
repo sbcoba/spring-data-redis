@@ -56,7 +56,7 @@ public interface RedisCacheWriter {
 
 		Assert.notNull(connectionFactory, "ConnectionFactory must not be null!");
 
-		return new DefaultRedisCacheWriter(connectionFactory, Duration.ofMillis(50));
+		return new DefaultRedisCacheWriter(connectionFactory, Duration.ofMillis(50), 100);
 	}
 
 	/**
